@@ -70,14 +70,34 @@ changePlayer board@Board{player=player} = board{player=player'}
 stonesAt :: Int -> Board -> Int
 stonesAt pos Board{holes=holes} = holes `at` pos
 
-collectStones :: Int -> Board -> Board
-collectStones pos board = board{holes=holes'} where
+holeBoundsFor :: Int -> (Int, Int)
+holeBoundsFor pl = (offset, offset + size - 1)
+	where
+		offset = pl * (size + 1)
+
+holesFor :: Int -> Board -> [Int]
+holesFor pl board = (take $ hlast - hfirst + 1) . (drop hfirst) . holes $ board
+	where
+		(hfirst, hlast) = holeBoundsFor pl
+
+allHolesEmpty :: Int -> Board -> Bool
+allHolesEmpty pl board = sumOfHoles == 0
+	where
+		sumOfHoles = sum . (holesFor pl) $ board
+
+cleanupAllHoles :: Int -> Board -> Board
+cleanupAllHoles pl board = foldl cleanupAt board [hfirst..hlast]
+	where
+		cleanupAt board pos = collectStones pl pos board
+		(hfirst, hlast) = holeBoundsFor pl
+
+collectStones :: Int -> Int -> Board -> Board
+collectStones pl pos board = board{holes=holes'} where
 	holes' = addToColl . emptyPos . holes $ board
 
 	emptyPos = modifyAt (\ _ -> 0) pos
 	addToColl = modifyAt (+ stones) collPos
 
-	pl = player board
 	stones = stonesAt pos board
 	collPos = pl * (size + 1) + size
 
@@ -126,19 +146,32 @@ makeStep pos board = (makeResult . changePlayerRule . cleanupAtTheEnd . stealSto
 		moveStonesRule board' = moveStones pos board'
 
 		stealStonesRule board' = if and [playersHole, lastWasEmpty] then newboard else board' where
+			pl = player board'
 			playersHole = belongsToPlayer lasthole (player board)
 			lastWasEmpty = stonesAt lasthole board' == 1
-			newboard = (collectStones $ opositePos lasthole) . 
-			           (collectStones lasthole) $ board'
+			newboard = (collectStones pl $ opositePos lasthole) . 
+			           (collectStones pl lasthole) $ board'
 
 		changePlayerRule board' = case isColl lasthole of
 										True -> board'
 										False -> changePlayer board'
 
-		cleanupAtTheEnd board' = board' -- TODO -- if or [allHolesEmpty 0, allHolesEmpty 1]
+		cleanupAtTheEnd board' = if or [allHolesEmpty 0 board', allHolesEmpty 1 board'] 
+								 then (cleanupAllHoles 0) . (cleanupAllHoles 1) $ board'
+								 else board'
+
 
 		makeResult :: Board -> (Int, Board)
-		makeResult board' = (-1, board')
+		makeResult board' = (winner, board')
+			where
+				winner = case and [allHolesEmpty 0 board', allHolesEmpty 1 board'] of
+							False -> -1
+							True -> if scoreP1 > scoreP2 
+									then 0 
+									else if scoreP1 < scoreP2 
+										 then 1
+										 else 2
+								where (scoreP1, scoreP2) = getState board'
 
 
 gameLoop :: Board -> IO ()
@@ -153,7 +186,16 @@ gameLoop board = do
 			Nothing -> (-1, board)
 			Just pos -> makeStep pos board
 
-		gameLoop newboard
+		case winner of
+			-1 -> gameLoop newboard
+			2  -> do
+				putStr "\n\n*****\n\n"
+				printBoard newboard
+				print $ "DRAW!"
+			_  -> do
+				putStr "\n\n*****\n\n"
+				printBoard newboard
+				print $ "THE WINNER IS PLAYER" ++ (show $ winner+1)
 
 
 test :: IO ()
@@ -163,6 +205,7 @@ test = do
 		_ <- test "normalizePos" testNormalizePos
 		_ <- test "belongsToPlayer" testBelongsToPlayer
 		_ <- test "opositePos" testOpositePos
+		_ <- test "holeBoundsFor" testHoleBoundsFor
 		putStr "Done.\n"
 	where
 		test :: String -> IO () -> IO ()
@@ -220,6 +263,11 @@ test = do
 			assertEquals (opositePos $ size - 1) (size + 1)
 			assertEquals (opositePos $ size + 1) (size - 1)
 			assertEquals (opositePos $ size + size) 0
+
+		testHoleBoundsFor :: IO ()
+		testHoleBoundsFor = do
+			assertEquals (holeBoundsFor 0) (0, size - 1)
+			assertEquals (holeBoundsFor 1) (size + 1, size + size)
 
 		assertEquals :: (Show a, Eq a) => a -> a -> IO ()
 		assertEquals x y | x == y = putStr "."
